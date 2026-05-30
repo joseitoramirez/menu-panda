@@ -404,7 +404,7 @@
    CONFIGURACIÓN — GitHub como base de datos
    (No usa ningún servicio de Google)
 ══════════════════════════════════════════ */
-const GITHUB_TOKEN = "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";           // ← Pon tu GitHub Personal Access Token
+const GITHUB_TOKEN = "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";           // ← Pon tu GitHub Personal Access Token
 const GITHUB_REPO  = "joseitoramirez/menu-panda"; // Tu repositorio
 const GITHUB_FILE  = "products.json";             // Archivo donde se guardan los productos
 const IMGBB_API_KEY = "8d2b7f268f85c10da6db6cf7e7cfcb56"; // Tu clave ImgBB
@@ -451,19 +451,45 @@ async function ghLoad() {
 
 async function ghSave(comment = 'Update menu') {
   setBanner('warn', '⏳ Guardando cambios...');
-  // Obtener SHA del archivo actual (necesario para actualizar)
+
+  if (GITHUB_TOKEN === 'TU_TOKEN_AQUI') {
+    throw new Error('Configura tu GITHUB_TOKEN en el código');
+  }
+
+  // Obtener SHA del archivo actual (necesario para actualizar, no para crear)
   let sha;
   try {
     const head = await fetch(API_URL, {
-      headers: { 'Authorization': `token ${GITHUB_TOKEN}`, 'Accept': 'application/vnd.github.v3+json' }
+      headers: {
+        'Authorization': `token ${GITHUB_TOKEN}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'menu-chuchipanda'
+      }
     });
-    if (head.ok) { const d = await head.json(); sha = d.sha; }
-  } catch(_) {}
+    if (head.ok) {
+      const d = await head.json();
+      sha = d.sha;
+    } else if (head.status === 401) {
+      throw new Error('Token de GitHub inválido (401) — crea un token nuevo con permiso "repo"');
+    } else if (head.status === 403) {
+      throw new Error('Token sin permisos (403) — asegúrate de marcar la casilla "repo" al crear el token');
+    } else if (head.status !== 404) {
+      throw new Error(`Error GitHub ${head.status} al leer el archivo`);
+    }
+    // 404 = archivo no existe aún, es OK, lo crearemos
+  } catch(e) {
+    if (e.message.includes('401') || e.message.includes('403') || e.message.includes('Token')) throw e;
+    // Error de red — continuar sin SHA (intentar crear)
+    console.warn('No se pudo obtener SHA:', e.message);
+  }
+
+  const jsonContent = JSON.stringify(allProducts, null, 2);
+  const encoded = btoa(unescape(encodeURIComponent(jsonContent)));
 
   const body = {
     message: comment,
-    content: btoa(unescape(encodeURIComponent(JSON.stringify(allProducts, null, 2)))),
-    ...(sha ? {sha} : {})
+    content: encoded,
+    ...(sha ? { sha } : {})
   };
 
   const r = await fetch(API_URL, {
@@ -471,17 +497,23 @@ async function ghSave(comment = 'Update menu') {
     headers: {
       'Authorization': `token ${GITHUB_TOKEN}`,
       'Content-Type': 'application/json',
-      'Accept': 'application/vnd.github.v3+json'
+      'Accept': 'application/vnd.github.v3+json',
+      'User-Agent': 'menu-chuchipanda'
     },
     body: JSON.stringify(body)
   });
 
   if (!r.ok) {
     const err = await r.json().catch(()=>({}));
+    if (r.status === 401) throw new Error('Token inválido (401) — crea un token nuevo con permiso "repo"');
+    if (r.status === 403) throw new Error('Sin permisos (403) — el token debe tener permiso "repo" completo');
+    if (r.status === 404) throw new Error('Repositorio no encontrado (404) — verifica GITHUB_REPO en el código');
+    if (r.status === 422) throw new Error('Error de contenido (422) — ' + (err.message||''));
     throw new Error(`GitHub ${r.status}: ${err.message || r.statusText}`);
   }
-  setBanner('ok', '✅ Cambios guardados correctamente');
-  setTimeout(()=>document.getElementById('gh-status-banner').classList.add('hidden'), 3500);
+
+  setBanner('ok', '✅ Cambios guardados — visibles en el menú en ~30 segundos');
+  setTimeout(()=>document.getElementById('gh-status-banner').classList.add('hidden'), 5000);
   return r.json();
 }
 
